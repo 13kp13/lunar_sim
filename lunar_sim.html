@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lunar Phase & Timing Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; color: white; }
+        canvas { touch-action: none; }
+        .slider-thumb::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; background: #3b82f6; cursor: pointer; border-radius: 50%; }
+        .slider-thumb::-moz-range-thumb { width: 20px; height: 20px; background: #3b82f6; cursor: pointer; border-radius: 50%; }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <!-- Header -->
+    <header class="bg-slate-900 p-4 border-b border-slate-700 flex justify-between items-center z-10">
+        <div>
+            <h1 class="text-xl font-bold text-blue-400">Lunar Orbit & Phase Predictor</h1>
+            <p class="text-sm text-slate-400">Drag the Moon or use the slider to see how orbit affects phase and timing.</p>
+        </div>
+        <div class="text-right hidden md:block">
+            <div class="text-xs text-slate-500 uppercase tracking-widest">Sun Direction</div>
+            <div class="text-yellow-400 font-bold text-2xl">➔ ➔ ➔</div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="flex-1 flex flex-col md:flex-row h-full relative">
+        
+        <!-- Left Panel: Orbit View -->
+        <div class="relative flex-1 bg-slate-950 flex justify-center items-center overflow-hidden border-r border-slate-800" id="orbit-container">
+            <canvas id="orbitCanvas" class="cursor-pointer"></canvas>
+            
+            <!-- Floating Label for Orbit -->
+            <div class="absolute top-4 left-4 bg-black/50 p-2 rounded text-xs pointer-events-none">
+                <span class="font-bold block text-blue-300">Top-Down View</span>
+                North Pole Center
+            </div>
+            
+            <!-- Sun Rays Indicator (Mobile) -->
+            <div class="absolute right-0 top-1/2 -translate-y-1/2 md:hidden pointer-events-none opacity-50">
+                <div class="text-yellow-400 font-bold text-4xl">➔</div>
+                <div class="text-yellow-400 font-bold text-4xl">➔</div>
+                <div class="text-yellow-400 font-bold text-4xl">➔</div>
+            </div>
+        </div>
+
+        <!-- Right Panel: Earth View & Data -->
+        <div class="w-full md:w-80 bg-slate-900 flex flex-col border-l border-slate-800 shadow-2xl z-20">
+            
+            <!-- Phase Visualization -->
+            <div class="p-6 bg-slate-800 flex flex-col items-center border-b border-slate-700">
+                <h2 class="text-sm font-semibold text-slate-400 mb-2 uppercase tracking-wide">View from Earth</h2>
+                <canvas id="phaseCanvas" width="150" height="150"></canvas>
+                <div id="phaseName" class="mt-3 text-xl font-bold text-white">New Moon</div>
+                <div id="illumination" class="text-sm text-blue-300">0% Illuminated</div>
+            </div>
+
+            <!-- Timing Predictions -->
+            <div class="flex-1 p-6 space-y-6 overflow-y-auto">
+                <div>
+                    <h2 class="text-sm font-semibold text-slate-400 mb-3 uppercase tracking-wide">Predicted Timing</h2>
+                    <div class="bg-slate-800 rounded-lg p-4 space-y-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-slate-300">Rises:</span>
+                            <span id="riseTime" class="font-mono font-bold text-green-400">06:00 AM</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-slate-300">Highest (Transit):</span>
+                            <span id="transitTime" class="font-mono font-bold text-yellow-400">12:00 PM</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-slate-300">Sets:</span>
+                            <span id="setTime" class="font-mono font-bold text-red-400">06:00 PM</span>
+                        </div>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-2 italic">
+                        *Times are approximate solar time.
+                    </p>
+                </div>
+
+                <!-- Controls -->
+                <div>
+                    <label class="block text-sm font-semibold text-slate-400 mb-2">Orbital Position</label>
+                    <input type="range" id="orbitSlider" min="0" max="360" value="0" class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb">
+                    <div class="flex justify-between text-xs text-slate-500 mt-1">
+                        <span>New</span>
+                        <span>1st Qtr</span>
+                        <span>Full</span>
+                        <span>3rd Qtr</span>
+                        <span>New</span>
+                    </div>
+                </div>
+
+                <!-- Explainer Text -->
+                <div class="bg-blue-900/20 border border-blue-900/50 p-3 rounded text-sm text-blue-200">
+                    <span class="font-bold">Tip:</span> 
+                    Notice how the rise time shifts by about 6 hours for every 90° the moon moves in orbit.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const orbitCanvas = document.getElementById('orbitCanvas');
+        const orbitCtx = orbitCanvas.getContext('2d');
+        const phaseCanvas = document.getElementById('phaseCanvas');
+        const phaseCtx = phaseCanvas.getContext('2d');
+        const slider = document.getElementById('orbitSlider');
+        const phaseNameEl = document.getElementById('phaseName');
+        const illuminationEl = document.getElementById('illumination');
+        const riseTimeEl = document.getElementById('riseTime');
+        const setTimeEl = document.getElementById('setTime');
+        const transitTimeEl = document.getElementById('transitTime');
+
+        let angle = 0; // Degrees, 0 is New Moon (between Earth and Sun)
+        
+        // Constants
+        const SUN_Direction = 0; // Sun is at 0 degrees (Right) in canvas math if we adjust correctly, but let's standard math: 0 is right.
+        // Actually, for simplicity: Sun is to the RIGHT.
+        // Angle 0: Moon is between Earth and Sun (New Moon).
+        // Angle 90: Moon is "above" Earth (First Quarter).
+        // Angle 180: Earth is between Moon and Sun (Full Moon).
+        // Angle 270: Moon is "below" Earth (Third Quarter).
+
+        function resize() {
+            const container = document.getElementById('orbit-container');
+            orbitCanvas.width = container.clientWidth;
+            orbitCanvas.height = container.clientHeight;
+            drawOrbit();
+            drawPhase();
+        }
+
+        window.addEventListener('resize', resize);
+
+        slider.addEventListener('input', (e) => {
+            angle = parseInt(e.target.value);
+            drawOrbit();
+            drawPhase();
+            updateData();
+        });
+
+        // Add mouse/touch interaction to drag moon
+        let isDragging = false;
+        
+        orbitCanvas.addEventListener('mousedown', startDrag);
+        orbitCanvas.addEventListener('touchstart', startDrag, {passive: false});
+        window.addEventListener('mousemove', drag);
+        window.addEventListener('touchmove', drag, {passive: false});
+        window.addEventListener('mouseup', endDrag);
+        window.addEventListener('touchend', endDrag);
+
+        function startDrag(e) {
+            const rect = orbitCanvas.getBoundingClientRect();
+            const x = (e.clientX || e.touches[0].clientX) - rect.left;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+            
+            // Simple hit test (check if near orbit path)
+            const cx = orbitCanvas.width / 2;
+            const cy = orbitCanvas.height / 2;
+            const dx = x - cx;
+            const dy = y - cy;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            if (dist > 50 && dist < Math.min(cx, cy)) {
+                isDragging = true;
+                drag(e);
+            }
+        }
+
+        function drag(e) {
+            if (!isDragging) return;
+            e.preventDefault();
+            
+            const rect = orbitCanvas.getBoundingClientRect();
+            const cx = orbitCanvas.width / 2;
+            const cy = orbitCanvas.height / 2;
+            const x = (e.clientX || e.touches[0].clientX) - rect.left;
+            const y = (e.clientY || e.touches[0].clientY) - rect.top;
+
+            // Calculate angle relative to center
+            // Math.atan2(y, x) returns angle in radians. 
+            // 0 is Right (Sun). 
+            // We want 0 to be New Moon (Right).
+            // Canvas Y is down.
+            
+            let rad = Math.atan2(y - cy, x - cx);
+            let deg = rad * (180 / Math.PI);
+            
+            // Normalize to 0-360, where 0 is Right
+            if (deg < 0) deg += 360;
+            
+            // Update app state
+            angle = deg; 
+            
+            // To make slider logic easy, let's reverse direction visually or just map it 
+            // Standard map: 0 is Right. 
+            // In our logic: 0 is New Moon. Sun is Right. So Moon at Right is New Moon.
+            
+            slider.value = angle;
+            drawOrbit();
+            drawPhase();
+            updateData();
+        }
+
+        function endDrag() {
+            isDragging = false;
+        }
+
+        function formatTime(hours) {
+            // Normalize to 0-24
+            hours = hours % 24;
+            if (hours < 0) hours += 24;
+            
+            let h = Math.floor(hours);
+            let m = Math.floor((hours - h) * 60);
+            let ampm = h >= 12 ? 'PM' : 'AM';
+            
+            // 12-hour format conversion
+            h = h % 12;
+            h = h ? h : 12; // the hour '0' should be '12'
+            
+            return `${h}:${m.toString().padStart(2, '0')} ${ampm}`;
+        }
+
+        function updateData() {
+            // Calculate Times
+            // New Moon (0 deg) -> Rise 6am (6.0), Transit 12pm (12.0), Set 6pm (18.0)
+            // Formula: Time = (Angle / 15) + 6
+            // Angle is degrees (0-360)
+            // Earth rotates 15 deg per hour.
+            
+            // Transit time: When moon is overhead. 
+            // At 0 deg (New), Moon is overhead at Noon (12.0).
+            // At 180 deg (Full), Moon is overhead at Midnight (24.0 or 0.0).
+            const offsetHours = angle / 15; // How many hours "behind" the sun the moon is
+            
+            let transit = 12 + offsetHours;
+            let rise = transit - 6;
+            let set = transit + 6;
+
+            riseTimeEl.textContent = formatTime(rise);
+            transitTimeEl.textContent = formatTime(transit);
+            setTimeEl.textContent = formatTime(set);
+
+            // Phase Names
+            let pName = "";
+            const t = 20; // threshold
+            if (angle > 360-t || angle < t) pName = "New Moon";
+            else if (angle >= t && angle < 90-t) pName = "Waxing Crescent";
+            else if (angle >= 90-t && angle <= 90+t) pName = "First Quarter";
+            else if (angle > 90+t && angle < 180-t) pName = "Waxing Gibbous";
+            else if (angle >= 180-t && angle <= 180+t) pName = "Full Moon";
+            else if (angle > 180+t && angle < 270-t) pName = "Waning Gibbous";
+            else if (angle >= 270-t && angle <= 270+t) pName = "Third Quarter";
+            else pName = "Waning Crescent";
+
+            phaseNameEl.textContent = pName;
+            
+            // Illumination %
+            // 0 at 0, 100 at 180, 0 at 360
+            // Cosine curve
+            let rad = angle * Math.PI / 180;
+            let percent = (1 - Math.cos(rad)) / 2 * 100;
+            illuminationEl.textContent = `${Math.round(percent)}% Illuminated`;
+        }
+
+        function drawOrbit() {
+            const w = orbitCanvas.width;
+            const h = orbitCanvas.height;
+            const cx = w/2;
+            const cy = h/2;
+            const earthRadius = Math.min(w,h) * 0.15;
+            const orbitRadius = Math.min(w,h) * 0.35;
+
+            orbitCtx.clearRect(0, 0, w, h);
+
+            // Draw Stars background (static randoms)
+            // For performance, simple random dots
+            orbitCtx.fillStyle = "white";
+            for(let i=0; i<50; i++) {
+                // Seeded randomish look based on coords to keep static during redraw
+                let sx = (Math.sin(i)*10000)%w;
+                let sy = (Math.cos(i)*10000)%h;
+                if(sx<0) sx+=w;
+                if(sy<0) sy+=h;
+                orbitCtx.beginPath();
+                orbitCtx.arc(sx, sy, Math.random()*1.5, 0, Math.PI*2);
+                orbitCtx.fill();
+            }
+
+            // Draw Sun Rays (Direction)
+            orbitCtx.strokeStyle = "rgba(255, 255, 0, 0.2)";
+            orbitCtx.lineWidth = 2;
+            for(let i=-2; i<=2; i++) {
+                orbitCtx.beginPath();
+                orbitCtx.moveTo(w, cy + i*40);
+                orbitCtx.lineTo(cx + earthRadius + 20, cy + i*40);
+                orbitCtx.stroke();
+            }
+
+            // Draw Orbit Path
+            orbitCtx.beginPath();
+            orbitCtx.arc(cx, cy, orbitRadius, 0, Math.PI*2);
+            orbitCtx.strokeStyle = "#334155";
+            orbitCtx.lineWidth = 2;
+            orbitCtx.setLineDash([5, 5]);
+            orbitCtx.stroke();
+            orbitCtx.setLineDash([]);
+
+            // Draw Earth
+            // Earth Shadow side
+            orbitCtx.fillStyle = "#1d4ed8"; // Ocean Blue
+            orbitCtx.beginPath();
+            orbitCtx.arc(cx, cy, earthRadius, 0, Math.PI*2);
+            orbitCtx.fill();
+            
+            // Earth Lit Side (Always right side lit by sun)
+            orbitCtx.fillStyle = "#3b82f6"; // Lighter Blue
+            orbitCtx.beginPath();
+            orbitCtx.arc(cx, cy, earthRadius, -Math.PI/2, Math.PI/2);
+            orbitCtx.fill();
+            
+            // Simple Earth details (Pole view)
+            orbitCtx.fillStyle = "#10b981"; // Green land
+            orbitCtx.beginPath();
+            orbitCtx.arc(cx, cy, earthRadius*0.6, 0, Math.PI*2); 
+            orbitCtx.fill();
+
+            // Observer Clock Hands (To show time)
+            // Noon is Right, Midnight is Left.
+            // Let's draw the "Time Dial" around earth
+            orbitCtx.font = "10px monospace";
+            orbitCtx.fillStyle = "#94a3b8";
+            orbitCtx.textAlign = "center";
+            orbitCtx.fillText("12 PM", cx + earthRadius + 15, cy + 4);
+            orbitCtx.fillText("12 AM", cx - earthRadius - 15, cy + 4);
+            orbitCtx.fillText("6 PM", cx, cy - earthRadius - 10);
+            orbitCtx.fillText("6 AM", cx, cy + earthRadius + 15);
+
+
+            // Draw Moon
+            const moonX = cx + Math.cos(angle * Math.PI / 180) * orbitRadius;
+            const moonY = cy + Math.sin(angle * Math.PI / 180) * orbitRadius;
+            const moonRadius = earthRadius * 0.4;
+
+            // Moon Shadow Base
+            orbitCtx.fillStyle = "#334155";
+            orbitCtx.beginPath();
+            orbitCtx.arc(moonX, moonY, moonRadius, 0, Math.PI*2);
+            orbitCtx.fill();
+
+            // Moon Lit Side (Always facing Sun/Right)
+            orbitCtx.fillStyle = "#e2e8f0";
+            orbitCtx.beginPath();
+            orbitCtx.arc(moonX, moonY, moonRadius, -Math.PI/2, Math.PI/2);
+            orbitCtx.fill();
+
+            // Draw Line of Sight from Earth to Moon
+            orbitCtx.strokeStyle = "rgba(255,255,255,0.2)";
+            orbitCtx.beginPath();
+            orbitCtx.moveTo(cx, cy);
+            orbitCtx.lineTo(moonX, moonY);
+            orbitCtx.stroke();
+        }
+
+        function drawPhase() {
+            // Draw what the moon looks like from Earth
+            const w = phaseCanvas.width;
+            const h = phaseCanvas.height;
+            const cx = w/2;
+            const cy = h/2;
+            const r = w * 0.4;
+
+            phaseCtx.clearRect(0, 0, w, h);
+
+            // Draw dark disk background
+            phaseCtx.fillStyle = "#1e293b";
+            phaseCtx.beginPath();
+            phaseCtx.arc(cx, cy, r, 0, Math.PI*2);
+            phaseCtx.fill();
+
+            // Calculate Phase Geometry
+            // Logic: Overlap a circle and a semi-circle or ellipse to create phase
+            phaseCtx.fillStyle = "#f1f5f9"; // Moon Color
+            
+            // Standard approach for drawing phases:
+            // 1. Draw a white semicircle on the side facing the sun (relative to phase angle)
+            // 2. Draw an ellipse on the other side.
+            
+            // Normalize angle for phase rendering
+            // 0 = New (Dark), 180 = Full (White)
+            
+            // Let's simplify drawing logic based on quadrant
+            // Quadrant 1: 0-90 (Waxing Crescent) -> Light on Right. Concave shadow.
+            // Quadrant 2: 90-180 (Waxing Gibbous) -> Light on Right. Convex bulge.
+            // Quadrant 3: 180-270 (Waning Gibbous) -> Light on Left. Convex bulge.
+            // Quadrant 4: 270-360 (Waning Crescent) -> Light on Left. Concave shadow.
+
+            // Base Semicircle
+            phaseCtx.beginPath();
+            if (angle < 180) {
+                // Waxing: Right side is lit base
+                phaseCtx.arc(cx, cy, r, -Math.PI/2, Math.PI/2);
+            } else {
+                // Waning: Left side is lit base
+                phaseCtx.arc(cx, cy, r, Math.PI/2, -Math.PI/2);
+            }
+            phaseCtx.fill();
+
+            // The Ellipse part handles the terminator line
+            // Width of ellipse varies from -r to r
+            // At 0 deg: Ellipse covers the white semicircle (Dark)
+            // At 90 deg: Ellipse is flat (width 0) -> Half moon
+            // At 180 deg: Ellipse adds to the white semicircle (Full)
+            
+            let ellipseWidth = r * Math.cos(angle * Math.PI / 180);
+            
+            // We need to set the color of the ellipse.
+            // If we are adding light (Gibbous), it's white.
+            // If we are subtracting light (Crescent), it's dark.
+            
+            // Actually, a simpler math approach:
+            // Always draw the right or left semicircle white.
+            // Then draw an ellipse that is either white or dark to fill/cut.
+            
+            // Redo:
+            phaseCtx.fillStyle = "#1e293b"; // Reset to Dark
+            phaseCtx.beginPath();
+            phaseCtx.arc(cx, cy, r, 0, Math.PI*2);
+            phaseCtx.fill();
+            
+            phaseCtx.fillStyle = "#f1f5f9"; // Light
+
+            if (angle <= 180) {
+                // Waxing (Light grows from Right)
+                phaseCtx.beginPath();
+                phaseCtx.arc(cx, cy, r, -Math.PI/2, Math.PI/2); // Right semicircle White
+                phaseCtx.fill();
+                
+                // Terminator Ellipse
+                // Varies from -1 (New) to 1 (Full)
+                // -cos(angle)
+                // 0 deg -> cos=1. We need dark ellipse on right.
+                // 90 deg -> cos=0. Flat.
+                // 180 deg -> cos=-1. We need white ellipse on left.
+                
+                let wVal = -Math.cos(angle * Math.PI / 180) * r;
+                
+                phaseCtx.fillStyle = wVal > 0 ? "#f1f5f9" : "#1e293b";
+                phaseCtx.beginPath();
+                phaseCtx.ellipse(cx, cy, Math.abs(wVal), r, 0, 0, Math.PI*2);
+                phaseCtx.fill();
+            } else {
+                // Waning (Light shrinks to Left)
+                phaseCtx.beginPath();
+                phaseCtx.arc(cx, cy, r, Math.PI/2, -Math.PI/2); // Left semicircle White
+                phaseCtx.fill();
+                
+                // Terminator
+                // 180 -> Full. White ellipse on right.
+                // 270 -> Half. Flat.
+                // 360 -> New. Dark ellipse on left.
+                
+                let wVal = Math.cos(angle * Math.PI / 180) * r;
+                
+                phaseCtx.fillStyle = wVal < 0 ? "#f1f5f9" : "#1e293b";
+                phaseCtx.beginPath();
+                phaseCtx.ellipse(cx, cy, Math.abs(wVal), r, 0, 0, Math.PI*2);
+                phaseCtx.fill();
+            }
+        }
+
+        // Init
+        resize();
+        updateData();
+
+    </script>
+</body>
+</html>
